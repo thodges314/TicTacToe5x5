@@ -248,6 +248,50 @@ h1 {
 .status-bar.o-wins    { color: var(--o-color); }
 .status-bar.draw      { color: var(--text); }
 
+/* ── Move-source indicator ── */
+.move-info {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.3px;
+  color: var(--text-dim);
+  min-height: 1.4em;
+  text-align: center;
+  transition: color 0.25s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+/* Dot that pulses briefly when the indicator updates */
+.move-info::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0;
+  flex-shrink: 0;
+  transition: opacity 0.2s;
+}
+
+.move-info.book {
+  color: var(--o-color);   /* warm amber — book is "known territory" */
+}
+.move-info.book::before  { opacity: 0.7; }
+
+.move-info.engine {
+  color: var(--x-color);   /* cyan — engine is "thinking live" */
+}
+.move-info.engine::before { opacity: 0.7; }
+
+@keyframes dotPop {
+  0%   { transform: scale(1.8); opacity: 0.9; }
+  100% { transform: scale(1);   opacity: 0.7; }
+}
+.move-info.update::before { animation: dotPop 0.35s ease-out forwards; }
+
 /* ── Replay button ── */
 .replay-btn {
   background: transparent;

@@ -139,6 +139,7 @@ const sideSelect   = document.getElementById('side-select');
 const boardWrap    = document.getElementById('board-wrap');
 const boardEl      = document.getElementById('board');
 const statusBar    = document.getElementById('status-bar');
+const moveInfo     = document.getElementById('move-info');
 const replayBtn    = document.getElementById('replay-btn');
 const engineStatus = document.getElementById('engine-status');
 const subtitle     = document.getElementById('subtitle');
@@ -190,6 +191,14 @@ function unmarkThinking() {
 function setStatus(msg, cls = '') {
   statusBar.className = 'status-bar' + (cls ? ' ' + cls : '');
   statusBar.textContent = msg;
+}
+
+// Update the move-source indicator. mode: 'book' | 'engine' | '' (clear)
+function setMoveInfo(mode, text) {
+  moveInfo.classList.remove('update');
+  void moveInfo.offsetWidth; // force reflow to restart animation
+  moveInfo.className = 'move-info' + (mode ? ` ${mode} update` : '');
+  moveInfo.textContent = text;
 }
 
 // ── Win / draw detection ────────────────────────────────────────────────────
@@ -270,20 +279,37 @@ function applyMove(idx, player) {
 
 async function cpuTurn() {
   if (gameOver) return;
-  setStatus('Thinking…', 'cpu-turn');
+  setStatus('Thinking\u2026', 'cpu-turn');
   markThinking();
   await new Promise(r => setTimeout(r, 30)); // yield to browser for UI update
 
+  const t0 = performance.now();
+
   // 1. Check opening book first (instant lookup)
   let move = openingBookLookup(cells);
+  let moveSource = 'book';
+  let usedDepth = null;
 
   // 2. Fall back to live WASM engine with adaptive depth
   if (move < 0 || move >= BOARD_SIZE * BOARD_SIZE || cells[move] !== 0) {
     syncWasmBuffer();
-    const depth = adaptiveDepth(cells);
+    const empty = cells.filter(c => c === 0).length;
+    usedDepth = adaptiveDepth(cells);
+    const effectiveDepth = Math.min(usedDepth, empty); // can't exceed remaining cells
+    moveSource = 'engine';
     move = engine.ccall('wasm_getBestMove', 'number',
       ['number','number','number','number','number'],
-      [BOARD_SIZE, TARGET, wasmBufPtr, cpuPlayer === 1 ? 1 : 0, depth]);
+      [BOARD_SIZE, TARGET, wasmBufPtr, cpuPlayer === 1 ? 1 : 0, effectiveDepth]);
+    usedDepth = effectiveDepth;
+  }
+
+  const ms = Math.round(performance.now() - t0);
+
+  // Update move-source indicator
+  if (moveSource === 'book') {
+    setMoveInfo('book', '\u{1F4D6} Opening book');
+  } else {
+    setMoveInfo('engine', `\u{1F50D} Engine \u00B7 D=${usedDepth} \u00B7 ${ms}\u202Fms`);
   }
 
   unmarkThinking();
@@ -320,6 +346,7 @@ function startGame(human) {
   gameOver = false;
 
   subtitle.textContent = `Depth-12 AI · 6-ply opening book · Play as ${human === 1 ? 'X' : 'O'}`;
+  setMoveInfo('', '');  // clear indicator at new game start
 
   sideSelect.hidden = true;
   boardWrap.hidden  = false;
