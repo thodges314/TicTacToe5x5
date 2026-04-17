@@ -111,11 +111,14 @@ function openingBookLookup(cells) {
 //   D=12+: fast  (late game)
 function adaptiveDepth(cells) {
   const empty = cells.filter(c => c === 0).length;
-  if (empty >= 21) return 6;   // still in opening range; book normally covers this
-  if (empty >= 17) return 8;   // early-mid game
-  if (empty >= 13) return 10;  // mid game
-  if (empty >= 9)  return 12;  // mid-late game
-  return 20;                   // endgame: full depth always fast (≤8 cells left = tiny tree)
+  // D=6 only when ≤2 moves made (≥23 empty) — always covered by opening book.
+  // The book→live transition zone (17–22 empty, 3–8 moves made) uses D=8
+  // to close the most exploitable tactical gap without excessive WASM latency.
+  if (empty >= 23) return 6;   // ≤2 moves made; opening book always covers this
+  if (empty >= 17) return 8;   // book transition + early-mid game (~1–3s WASM)
+  if (empty >= 13) return 10;  // mid game (~300ms WASM, TT warm)
+  if (empty >= 9)  return 12;  // mid-late game (~100ms WASM)
+  return 20;                   // endgame: full depth, trivially fast
 }
 
 // ── State ───────────────────────────────────────────────────────────────────

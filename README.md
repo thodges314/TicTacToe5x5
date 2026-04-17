@@ -67,13 +67,15 @@ This approach avoids `BigInt` entirely and is efficient in plain JavaScript.
 
 Once the opening book is exhausted, the live WASM engine uses **adaptive depth** based on how many empty cells remain:
 
-| Empty cells | Search depth | Typical WASM time |
-|---|---|---|
-| ≥ 21 | D=6 | ~200 ms |
-| 17–20 | D=8 | ~800 ms |
-| 13–16 | D=10 | ~300 ms |
-| 9–12 | D=12 | ~100 ms |
-| ≤ 8 | D=20 | < 50 ms |
+| Empty cells | Moves made | Search depth | Typical WASM time | Notes |
+|---|---|---|---|---|
+| ≥ 23 | ≤ 2 | D=6 | ~200 ms | Book always covers this |
+| 17–22 | 3–8 | D=8 | ~1–3 s | Book→live transition zone |
+| 13–16 | 9–12 | D=10 | ~300 ms | TT now warm |
+| 9–12 | 13–16 | D=12 | ~100 ms | Near-convergence depth |
+| ≤ 8 | 17+ | D=20 | < 50 ms | Full depth, tiny tree |
+
+> **Why D=8 at the book→live boundary?** The first move after the opening book is exhausted (~19–22 empty cells) is the easiest place for an experienced player to exploit a weaker engine. Using D=8 here (rather than D=6) closes that gap at the cost of slightly longer think time — an acceptable trade-off for a Hall of Fame–tier challenge.
 
 The TT warms up rapidly during a game session, so subsequent moves at the same depth are much faster than the first.
 
@@ -196,9 +198,41 @@ This project is a sister to [TicTacToe4x4](https://github.com/thodges314/TicTacT
 | Win target | 4 in a row | 5 in a row |
 | Full game tree | Tractable (~hours) | Intractable at full depth |
 | Engine depth | Full (∞) | Depth 12 (calibrated) |
-| Opening book | 4 entries (trivial) | ~300–500 entries (6-ply) |
+| Opening book | 4 entries (trivial) | ~300–1,000 entries (6-ply) |
 | Theoretical result | **Draw** (proven) | **Draw** (strongly implied) |
-| Live WASM depth | Full | Adaptive D=6–20 |
+| Live WASM depth | Full | Adaptive D=8–20 |
+| Hall of Fame possible? | No (unbeatable, no wins possible) | Yes (rare human wins possible) |
+
+---
+
+## Hall of Fame — Can a Human Win?
+
+### Why It's Nearly Impossible
+
+The engine plays at **convergence depth (D=12)** throughout the opening book, and at **D=8** the moment the live engine takes over. The combination makes it genuinely elite:
+
+| Player type | Estimated win probability |
+|---|---|
+| Casual player | < 0.01% |
+| Puzzle / strategy enthusiast | < 0.1% |
+| Someone who studies the engine carefully | ~1–2% |
+| Expected Hall of Fame entries / year (worldwide) | ~1–3 |
+
+**Why a human can't simply draw:** "Draw under perfect play" means the game is a draw only if *both* sides play perfectly. Any deviation by the human gives the engine a winning position it will exploit perfectly. Successfully drawing against the engine requires finding the one correct response at every single move — an incredibly demanding task.
+
+### The One Realistic Path to a Win
+
+The live engine's first move after the book is exhausted (~19 empty cells) is the most exploitable moment. This is why the adaptive depth was raised from D=6 to **D=8** at the book→live boundary — it closes the easiest tactical gap.
+
+A highly analytical player who studies recorded engine games and identifies lines where D=8 misses a tactical shot could theoretically exploit this. The planned Hall of Fame anti-farming measure directly addresses this:
+
+### Anti-Farming Design (Planned)
+
+- **Hall of Fame backend**: AWS stores the complete move sequence of every winning game as JSON.
+- **Pattern matching**: Before registering a new win, the sequence is compared against all stored games. An identical game (or one differing only by D₈ symmetry, handled via canonical hashing) is rejected.
+- **Effect**: Even if a player finds a genuine D=8 exploit, they can claim Hall of Fame once. The same line can't be farmed. Meanwhile, the discovered exploit can be patched into the opening book for a future update, closing it permanently.
+
+> The rarity of genuinely earned wins is what makes a Hall of Fame entry meaningful.
 
 ---
 
