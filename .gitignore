@@ -1,0 +1,19 @@
+# Native compiled binaries (built locally, not needed in repo)
+tools/calibrate
+tools/gen_book5x5
+
+# Runtime logs (generated during calibration / book generation)
+results/
+
+# OS / editor
+.DS_Store
+.vscode/
+*.swp
+*~
+
+# Note: public/engine.js + public/engine.wasm are committed intentionally.
+# GitHub Pages has no emcc build step, so the WASM artifacts must live in the repo.
+
+# Note: public/opening_book5x5.json is committed even while still generating.
+# app.js handles an empty/partial file gracefully ("Engine ready (book generating…)").
+# Replace with the completed file once gen_book5x5 finishes overnight.

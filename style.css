@@ -1,0 +1,286 @@
+/* ============================================================
+   5×5 Tic-Tac-Toe — dark navy + glowing accents
+   X = electric cyan (#00d4ff)
+   O = warm amber   (#ffaa00)
+   Grid: 5x5 (vs 4x4 in the 4x4 project — only css-grid changes)
+   ============================================================ */
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+/* Ensure the HTML hidden attribute always wins over any display rule */
+[hidden] { display: none !important; }
+
+:root {
+  --bg:         #0f0f1a;
+  --surface:    #1a1a2e;
+  --surface2:   #22223b;
+  --border:     #2e2e4a;
+  --text:       #e0e0f0;
+  --text-dim:   #666688;
+  --x-color:    #00d4ff;
+  --x-glow:     rgba(0, 212, 255, 0.25);
+  --o-color:    #ffaa00;
+  --o-glow:     rgba(255, 170, 0, 0.25);
+  --accent:     #7c6df0;
+  --win-glow:   rgba(124, 109, 240, 0.4);
+  /* 5×5 cells are slightly smaller to fit comfortably */
+  --cell-size:  min(14vw, 88px);
+  --gap:        min(1.8vw, 8px);
+  --radius:     10px;
+  --font-main:  'Inter', system-ui, sans-serif;
+  --font-mono:  'JetBrains Mono', monospace;
+}
+
+/* ── Layout ── */
+body {
+  font-family: var(--font-main);
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100dvh;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 32px 16px 48px;
+}
+
+/* Subtle animated grid background */
+.bg-grid {
+  position: fixed;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(124,109,240,0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(124,109,240,0.04) 1px, transparent 1px);
+  background-size: 40px 40px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.container {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 24px;
+  width: 100%;
+  max-width: 560px;
+}
+
+/* ── Title ── */
+.title-block { text-align: center; }
+
+h1 {
+  font-size: clamp(1.9rem, 6vw, 2.8rem);
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  color: var(--text);
+}
+
+.accent { color: var(--accent); }
+
+.subtitle {
+  margin-top: 6px;
+  font-size: 0.88rem;
+  color: var(--text-dim);
+  letter-spacing: 0.3px;
+}
+
+/* ── Side selection ── */
+.side-select {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  padding: 12px 0;
+}
+
+.choose-label {
+  font-size: 0.95rem;
+  color: var(--text-dim);
+}
+
+.side-btns { display: flex; gap: 20px; }
+
+.side-btn {
+  width: 100px;
+  height: 100px;
+  border-radius: var(--radius);
+  border: 2px solid var(--border);
+  background: var(--surface);
+  font-family: var(--font-mono);
+  font-size: 2.4rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.side-btn:hover { transform: translateY(-3px); }
+
+.x-btn { color: var(--x-color); border-color: rgba(0,212,255,0.3); }
+.x-btn:hover {
+  border-color: var(--x-color);
+  box-shadow: 0 0 24px var(--x-glow), 0 0 8px var(--x-glow);
+}
+
+.o-btn { color: var(--o-color); border-color: rgba(255,170,0,0.3); }
+.o-btn:hover {
+  border-color: var(--o-color);
+  box-shadow: 0 0 24px var(--o-glow), 0 0 8px var(--o-glow);
+}
+
+.engine-status {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  letter-spacing: 0.2px;
+}
+.engine-status.ready { color: #4ade80; }
+.engine-status.error { color: #f87171; }
+
+/* ── Game board — KEY CHANGE: 5 columns/rows ── */
+.board-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+}
+
+.board {
+  display: grid;
+  grid-template-columns: repeat(5, var(--cell-size));
+  grid-template-rows:    repeat(5, var(--cell-size));
+  gap: var(--gap);
+}
+
+/* ── Cells (identical logic to 4x4) ── */
+.cell {
+  background: var(--surface);
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: calc(var(--cell-size) * 0.40);
+  font-weight: 700;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s, transform 0.12s;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  position: relative;
+  overflow: hidden;
+}
+
+.cell::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: calc(var(--radius) - 2px);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.cell.hoverable:hover {
+  border-color: var(--accent);
+  transform: scale(1.05);
+  box-shadow: 0 0 16px rgba(124,109,240,0.3);
+}
+
+.cell.x {
+  color: var(--x-color);
+  border-color: rgba(0,212,255,0.4);
+  cursor: default;
+  animation: popIn 0.2s ease-out;
+}
+.cell.x::after { background: radial-gradient(circle, var(--x-glow), transparent 70%); opacity: 1; }
+
+.cell.o {
+  color: var(--o-color);
+  border-color: rgba(255,170,0,0.4);
+  cursor: default;
+  animation: popIn 0.2s ease-out;
+}
+.cell.o::after { background: radial-gradient(circle, var(--o-glow), transparent 70%); opacity: 1; }
+
+.cell.winner {
+  border-color: var(--accent);
+  background: var(--surface2);
+  box-shadow: 0 0 20px var(--win-glow), inset 0 0 12px var(--win-glow);
+  animation: winPulse 1s ease-in-out infinite alternate;
+}
+
+.cell.thinking {
+  animation: breathe 0.8s ease-in-out infinite alternate;
+}
+
+@keyframes popIn {
+  0%   { transform: scale(0.65); opacity: 0.3; }
+  60%  { transform: scale(1.09); }
+  100% { transform: scale(1);   opacity: 1; }
+}
+
+@keyframes winPulse {
+  from { box-shadow: 0 0 14px var(--win-glow), inset 0 0 6px var(--win-glow); }
+  to   { box-shadow: 0 0 30px var(--win-glow), inset 0 0 18px var(--win-glow); }
+}
+
+@keyframes breathe {
+  from { border-color: var(--border); }
+  to   { border-color: rgba(124,109,240,0.5); }
+}
+
+/* ── Status bar ── */
+.status-bar {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 28px;
+  font-size: 0.88rem;
+  letter-spacing: 0.3px;
+  color: var(--text-dim);
+  min-width: 260px;
+  text-align: center;
+  transition: color 0.2s;
+}
+
+.status-bar.your-turn { color: var(--accent); }
+.status-bar.cpu-turn  { color: var(--text-dim); }
+.status-bar.x-wins    { color: var(--x-color); }
+.status-bar.o-wins    { color: var(--o-color); }
+.status-bar.draw      { color: var(--text); }
+
+/* ── Replay button ── */
+.replay-btn {
+  background: transparent;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-dim);
+  font-family: var(--font-main);
+  font-size: 0.85rem;
+  padding: 8px 22px;
+  cursor: pointer;
+  letter-spacing: 0.3px;
+  transition: border-color 0.15s, color 0.15s, box-shadow 0.15s;
+}
+
+.replay-btn:hover {
+  border-color: var(--accent);
+  color: var(--text);
+  box-shadow: 0 0 12px rgba(124,109,240,0.2);
+}
+
+/* ── Footer ── */
+.footer {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  text-align: center;
+}
+
+.footer a { color: var(--accent); text-decoration: none; }
+.footer a:hover { text-decoration: underline; }
+
+/* ── Responsive: tighten grid on very small screens ── */
+@media (max-width: 400px) {
+  :root { --cell-size: 16.5vw; --gap: 2vw; }
+  h1 { font-size: 1.5rem; }
+  .side-btn { width: 80px; height: 80px; font-size: 2rem; }
+}
