@@ -37,6 +37,16 @@
       </div>
       <div class="status-bar" id="status-bar" aria-live="polite"></div>
       <div class="move-info" id="move-info" aria-live="polite"></div>
+      <div class="settings-row">
+        <label class="toggle-label" for="forced-draw-toggle"
+               title="End the game immediately when no 5-in-a-row is mathematically possible for either player. Off by default — the AI can still sneak a win while you think it's hopeless!">
+          <span>Detect forced draws</span>
+          <span class="toggle-switch">
+            <input type="checkbox" id="forced-draw-toggle" />
+            <span class="toggle-knob"></span>
+          </span>
+        </label>
+      </div>
       <button class="replay-btn" id="replay-btn" aria-label="Play again" hidden>↩ Play Again</button>
     </section>
 

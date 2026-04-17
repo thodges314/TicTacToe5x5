@@ -130,6 +130,9 @@ let humanPlayer = 0;
 let cpuPlayer   = 0;
 let gameOver    = false;
 
+// Forced-draw detection toggle (off by default — persists via localStorage)
+let forcedDrawDetect = localStorage.getItem('forcedDrawDetect') === 'true';
+
 // WASM board buffer: Int32Array allocated in WASM heap for zero-copy passing
 let wasmBuf     = null;
 let wasmBufPtr  = null;
@@ -147,6 +150,14 @@ const subtitle     = document.getElementById('subtitle');
 document.getElementById('btn-x').addEventListener('click', () => startGame(1));
 document.getElementById('btn-o').addEventListener('click', () => startGame(2));
 replayBtn.addEventListener('click', resetToSideSelect);
+
+// Forced-draw toggle — sync initial state and persist changes
+const forcedDrawToggle = document.getElementById('forced-draw-toggle');
+forcedDrawToggle.checked = forcedDrawDetect;
+forcedDrawToggle.addEventListener('change', () => {
+  forcedDrawDetect = forcedDrawToggle.checked;
+  localStorage.setItem('forcedDrawDetect', forcedDrawDetect);
+});
 
 // ── Board rendering ─────────────────────────────────────────────────────────
 function buildBoard() {
@@ -207,6 +218,29 @@ function syncWasmBuffer() {
   for (let i = 0; i < cells.length; i++) wasmBuf[i] = cells[i];
 }
 
+// Returns true if player still has at least one unblocked 5-cell line available.
+function hasPossibleWin(player) {
+  const opp = player === 1 ? 2 : 1;
+  const noOpp = idx => cells[idx] !== opp;
+  // Rows
+  for (let r = 0; r < BOARD_SIZE; r++)
+    for (let c = 0; c <= BOARD_SIZE - TARGET; c++)
+      if (Array.from({length: TARGET}, (_, i) => r * BOARD_SIZE + c + i).every(noOpp)) return true;
+  // Cols
+  for (let c = 0; c < BOARD_SIZE; c++)
+    for (let r = 0; r <= BOARD_SIZE - TARGET; r++)
+      if (Array.from({length: TARGET}, (_, i) => (r + i) * BOARD_SIZE + c).every(noOpp)) return true;
+  // Diagonal ↘
+  for (let r = 0; r <= BOARD_SIZE - TARGET; r++)
+    for (let c = 0; c <= BOARD_SIZE - TARGET; c++)
+      if (Array.from({length: TARGET}, (_, i) => (r + i) * BOARD_SIZE + c + i).every(noOpp)) return true;
+  // Diagonal ↙
+  for (let r = TARGET - 1; r < BOARD_SIZE; r++)
+    for (let c = 0; c <= BOARD_SIZE - TARGET; c++)
+      if (Array.from({length: TARGET}, (_, i) => (r - i) * BOARD_SIZE + c + i).every(noOpp)) return true;
+  return false;
+}
+
 function checkGameOver(lastPlayer) {
   syncWasmBuffer();
   if (engine.ccall('wasm_checkWin', 'number',
@@ -214,7 +248,6 @@ function checkGameOver(lastPlayer) {
       [BOARD_SIZE, TARGET, wasmBufPtr, lastPlayer])) {
 
     gameOver = true;
-    // Find the winning line by testing all possible lines
     const winLine = findWinLine(lastPlayer);
     renderBoard(winLine);
     const human = lastPlayer === humanPlayer;
@@ -228,6 +261,16 @@ function checkGameOver(lastPlayer) {
     renderBoard();
     SoundFX.playDraw();
     setStatus('Draw — well played!', 'draw');
+    replayBtn.hidden = false;
+    return true;
+  }
+  // Forced-draw detection (optional — controlled by toggle)
+  if (forcedDrawDetect && !hasPossibleWin(1) && !hasPossibleWin(2)) {
+    gameOver = true;
+    renderBoard();
+    SoundFX.playDraw();
+    setStatus('Forced draw — no 5-in-a-row possible', 'draw');
+    setMoveInfo('', '\uD83E\uDD1D No winning lines remain for either side');
     replayBtn.hidden = false;
     return true;
   }
