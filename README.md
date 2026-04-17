@@ -10,7 +10,7 @@ A fully browser-playable 5×5 Tic-Tac-Toe game powered by a C++ minimax engine c
 
 ### The Engine
 
-The AI is a classic **minimax with alpha-beta pruning**, written in C++20 and compiled to WASM via [Emscripten](https://emscripten.org/). The WASM module runs in a **Web Worker** so the UI remains fully responsive while the engine thinks.
+The AI is a classic **minimax with alpha-beta pruning**, written in C++20 and compiled to WASM via [Emscripten](https://emscripten.org/).
 
 Key optimisations:
 
@@ -18,11 +18,10 @@ Key optimisations:
 |---|---|
 | **Bitboards** | Board state stored as two `uint64_t` masks (X bits, O bits). All win checks, move generation, and hashing are single-instruction bitwise ops. |
 | **Alpha-Beta pruning** | Eliminates branches that can't affect the result. Cuts the effective search tree by ~99% vs naive minimax. |
-| **Transposition Table (TT)** | 128 MB Zobrist-hashed cache. Uses **depth-preferred replacement**: a cached entry is only overwritten if the new search used equal or greater remaining depth, or if it's a different position entirely. This preserves high-quality results across moves. |
+| **Transposition Table (TT)** | 128 MB Zobrist-hashed cache of previously evaluated positions. Shared across moves within a game session — warms up quickly and makes mid/late-game moves near-instant. |
 | **D₈ Symmetry** | The dihedral group of the square has 8 elements (4 rotations × 2 reflections). Each position is stored and looked up in its canonical (minimum-hash) form, reducing the effective search space by up to 8×. |
-| **Center-first move ordering** | Moves closer to the centre are tried first, maximising alpha-beta pruning efficiency. A separate positional heuristic also rewards piece centrality, biasing the engine toward board control. |
-| **Open-line heuristic** | At the depth limit, unblocked runs of 1–4 pieces are scored using weights 1 / 8 / 64 / 512. This makes depth-limited play genuinely stronger than returning 0 at every leaf. |
-| **Web Worker** | The WASM engine runs in a dedicated background thread via the Web Worker API. The UI never blocks — "Thinking…" animations and piece placement remain smooth regardless of engine think time. |
+| **Center-first move ordering** | Moves closer to the centre are tried first. Combined with alpha-beta, this dramatically increases the number of branches pruned at each node. |
+| **Open-line heuristic** | At the depth limit, unblocked runs of 1–4 pieces are scored using weights 1 / 8 / 64 / 512. This makes depth-limited play genuinely stronger than returning 0 at every leaf. |
 
 ### Depth Calibration
 
@@ -130,8 +129,6 @@ TicTacToe5x5/
 ├── public/
 │   ├── engine.js               # Emscripten-generated WASM loader  ← committed
 │   ├── engine.wasm             # Compiled engine binary            ← committed
-│   ├── worker.js               # Web Worker — loads WASM, handles
-│   │                           #   getBestMove off the main thread  ← committed
 │   └── opening_book5x5.json   # 824 D=12 canonical openings (6-ply) ← committed
 │
 ├── tools/
@@ -145,7 +142,7 @@ TicTacToe5x5/
 └── Makefile
 ```
 
-> **Why are `engine.js`, `engine.wasm`, `worker.js`, and `opening_book5x5.json` committed?**
+> **Why are `engine.js`, `engine.wasm`, and `opening_book5x5.json` committed?**
 > GitHub Pages serves static files only — there is no build step. All compiled artifacts and precomputed data must live in the repository.
 
 ---
@@ -276,7 +273,6 @@ The live engine's first moves after the book exhausts (~19 empty cells) are the 
 |---|---|
 | Game engine | C++20 |
 | Build (WASM) | Emscripten (`emcc`) |
-| Concurrency | Web Worker API (engine off main thread) |
 | Frontend | Vanilla HTML / CSS / JavaScript |
 | Fonts | [Inter](https://fonts.google.com/specimen/Inter), [JetBrains Mono](https://fonts.google.com/specimen/JetBrains+Mono) (Google Fonts) |
 | Hosting | GitHub Pages |
