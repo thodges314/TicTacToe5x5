@@ -21,7 +21,7 @@ Key optimisations:
 | **Transposition Table (TT)** | 128 MB Zobrist-hashed cache of previously evaluated positions. Shared across moves within a game session — warms up quickly and makes mid/late-game moves near-instant. |
 | **D₈ Symmetry** | The dihedral group of the square has 8 elements (4 rotations × 2 reflections). Each position is stored and looked up in its canonical (minimum-hash) form, reducing the effective search space by up to 8×. |
 | **Center-first move ordering** | Moves closer to the centre are tried first. Combined with alpha-beta, this dramatically increases the number of branches pruned at each node. |
-| **Open-line heuristic** | At the depth limit, unblocked runs of 1–4 pieces are scored using weights 1 / 8 / 64 / 512. This makes depth-limited play genuinely stronger than returning 0 at every leaf. |
+| **Open-line heuristic** | Used by calibration and book-generation tools: unblocked runs of 1–4 pieces scored 1 / 8 / 64 / 512. The live WASM build returns 0 at the depth limit (intentional — adaptive deep search + warm TT makes an in-browser heuristic unnecessary). |
 
 ### Depth Calibration
 
