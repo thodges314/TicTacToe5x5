@@ -120,9 +120,13 @@ public:
                 uint64_t mask = d1T << (r * size + c);
                 if ((pm & mask) == mask) return true;
             }
+        // Anti-diagonal ↙: template anchored at (0, target-1), steps down-left.
+        // Formula: i*(size-1)+(target-1) places bits at flat indices
+        //   (target-1), (target-1)+(size-1), ..., (target-1)+(target-1)*(size-1)
+        // which map to cells (0,target-1), (1,target-2), ..., (target-1,0). Correct.
         uint64_t d2T = 0;
-        for (int i = 0; i < target; i++) d2T |= (1ULL << (i * (size - 1)));
-        for (int r = target - 1; r < size; r++)
+        for (int i = 0; i < target; i++) d2T |= (1ULL << (i * (size - 1) + (target - 1)));
+        for (int r = 0; r <= size - target; r++)
             for (int c = 0; c <= size - target; c++) {
                 uint64_t mask = d2T << (r * size + c);
                 if ((pm & mask) == mask) return true;

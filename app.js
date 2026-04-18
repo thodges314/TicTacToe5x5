@@ -242,13 +242,11 @@ function hasPossibleWin(player) {
 }
 
 function checkGameOver(lastPlayer) {
-  syncWasmBuffer();
-  if (engine.ccall('wasm_checkWin', 'number',
-      ['number','number','number','number'],
-      [BOARD_SIZE, TARGET, wasmBufPtr, lastPlayer])) {
-
+  // Pure JS win detection — fixes anti-diagonal blind spot in WASM wasm_checkWin.
+  // findWinLine iterates all lines in JS and is correct for all directions.
+  const winLine = findWinLine(lastPlayer);
+  if (winLine.length > 0) {
     gameOver = true;
-    const winLine = findWinLine(lastPlayer);
     renderBoard(winLine);
     const human = lastPlayer === humanPlayer;
     if (human) SoundFX.playWin(); else SoundFX.playLoss();
@@ -256,7 +254,8 @@ function checkGameOver(lastPlayer) {
     replayBtn.hidden = false;
     return true;
   }
-  if (engine.ccall('wasm_isDraw', 'number', ['number','number'], [BOARD_SIZE, wasmBufPtr])) {
+  // Board full = draw (pure JS, no WASM needed)
+  if (cells.every(c => c !== 0)) {
     gameOver = true;
     renderBoard();
     SoundFX.playDraw();
