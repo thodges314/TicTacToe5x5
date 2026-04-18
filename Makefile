@@ -15,7 +15,7 @@ EMFLAGS = -O3 -std=c++20 -DWASM_BUILD -I. \
           -s MODULARIZE=1 \
           -s EXPORT_NAME='createEngineModule'
 
-.PHONY: all book wasm serve run run-quiet clean
+.PHONY: all book wasm serve run run-quiet test test-cpp test-js clean
 
 # ── Default: build everything ─────────────────────────────────────────────────
 all: tools/calibrate tools/gen_book5x5
@@ -60,6 +60,18 @@ run: tools/calibrate
 run-quiet: tools/calibrate
 	./tools/calibrate 2>/dev/null
 
+# ── Win-detection unit tests ─────────────────────────────────────────────────
+tools/test_win: tools/test_win.cpp engine/Bitboard.hpp
+	$(CXX) $(CXXFLAGS) $< -o $@
+
+test-cpp: tools/test_win
+	./tools/test_win
+
+test-js:
+	/opt/homebrew/bin/node tools/test_win.js
+
+test: test-cpp test-js
+
 # ── Clean ─────────────────────────────────────────────────────────────────────
 clean:
-	rm -f tools/calibrate tools/gen_book5x5 public/engine.js public/engine.wasm
+	rm -f tools/calibrate tools/gen_book5x5 tools/test_win public/engine.js public/engine.wasm
