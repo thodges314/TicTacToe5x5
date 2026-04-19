@@ -134,6 +134,58 @@ public:
         return false;
     }
 
+    // -------------------------------------------------------------------------
+    // isTheoreticalDraw — O(lines) early-exit for the minimax search.
+    //
+    // A position is a "theoretical draw" (dead position) when every possible
+    // winning line on the board contains at least one piece from EACH player,
+    // making it permanently uncompletable by either side.  When this is true,
+    // no sequence of future moves can produce a winner, so minimax can return
+    // 0 immediately instead of exploring all remaining empty squares.
+    //
+    // Uses identical template/mask logic to checkWin() for consistency.
+    // On a 5×5 target-5 board there are exactly 12 winning lines so this
+    // costs ~12 × 2 bitwise operations — cheaper than one node expansion.
+    // -------------------------------------------------------------------------
+    bool isTheoreticalDraw() const {
+        // A line is "alive" if at least one player has NO pieces in it
+        //   (that player can still complete it → game is not a dead draw).
+        // A line is "dead"  if BOTH players have ≥1 piece in it.
+        // We return false as soon as we find any alive line.
+
+        // Horizontal
+        for (int r = 0; r < size; r++)
+            for (int c = 0; c <= size - target; c++) {
+                uint64_t mask = ((1ULL << target) - 1) << (r * size + c);
+                if (!(xBits & mask) || !(oBits & mask)) return false;
+            }
+        // Vertical
+        uint64_t vT = 0;
+        for (int i = 0; i < target; i++) vT |= (1ULL << (i * size));
+        for (int c = 0; c < size; c++)
+            for (int r = 0; r <= size - target; r++) {
+                uint64_t mask = vT << (r * size + c);
+                if (!(xBits & mask) || !(oBits & mask)) return false;
+            }
+        // Main diagonal ↘
+        uint64_t d1T = 0;
+        for (int i = 0; i < target; i++) d1T |= (1ULL << (i * (size + 1)));
+        for (int r = 0; r <= size - target; r++)
+            for (int c = 0; c <= size - target; c++) {
+                uint64_t mask = d1T << (r * size + c);
+                if (!(xBits & mask) || !(oBits & mask)) return false;
+            }
+        // Anti-diagonal ↙ — same template as checkWin
+        uint64_t d2T = 0;
+        for (int i = 0; i < target; i++) d2T |= (1ULL << (i * (size - 1) + (target - 1)));
+        for (int r = 0; r <= size - target; r++)
+            for (int c = 0; c <= size - target; c++) {
+                uint64_t mask = d2T << (r * size + c);
+                if (!(xBits & mask) || !(oBits & mask)) return false;
+            }
+        return true;  // every line is dead → guaranteed draw
+    }
+
 #ifndef WASM_BUILD
     void display() const {
         for (int r = 0; r < size; r++) {

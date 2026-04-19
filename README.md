@@ -2,6 +2,8 @@
 
 A fully browser-playable 5×5 Tic-Tac-Toe game powered by a C++ minimax engine compiled to **WebAssembly**. The AI is calibrated to **depth 12**, confirmed by an overnight convergence experiment to produce identical play to depth 14 and 16. No server required — runs entirely in the browser.
 
+> **Engine status (April 2026):** Anti-diagonal win detection has been corrected and verified by a dedicated unit test suite. The opening book is being regenerated at D=14 with the fixed engine; see [Opening Book](#opening-book) for details.
+
 🎮 **[Play it live →](https://thodges314.github.io/TicTacToe5x5/)**
 
 ---
@@ -22,6 +24,8 @@ Key optimisations:
 | **D₈ Symmetry** | The dihedral group of the square has 8 elements (4 rotations × 2 reflections). Each position is stored and looked up in its canonical (minimum-hash) form, reducing the effective search space by up to 8×. |
 | **Center-first move ordering** | Moves closer to the centre are tried first. Combined with alpha-beta, this dramatically increases the number of branches pruned at each node. |
 | **Open-line heuristic** | Used by calibration and book-generation tools: unblocked runs of 1–4 pieces scored 1 / 8 / 64 / 512. The live WASM build returns 0 at the depth limit (intentional — adaptive deep search + warm TT makes an in-browser heuristic unnecessary). |
+| **Dead-position pruning** | `isTheoreticalDraw()` checks all 12 winning lines in O(12) bitwise ops. If every line contains at least one piece from each player, no win is reachable — minimax returns 0 without expanding any children. Prevents infinite search in drawn endgames. |
+| **Anti-diagonal win detection** | Corrected bit-template formula for ↙ diagonals (`i*(size-1)+(target-1)`). A bug in the prior formula caused certain anti-diagonal wins to go undetected, making the solver loop indefinitely in positions that were already won. Verified by a unit test suite (`tools/test_win.cpp`). |
 
 ### Depth Calibration
 
@@ -54,13 +58,15 @@ Separately, every cross-depth matchup across all tested depths (D=2 vs D=4 up to
 
 ### Opening Book
 
-A depth-12 **6-ply opening book** was precomputed offline on the M2 Studio (~3 hours, 12 cores) and ships as a static JSON file:
+The opening book is generated offline on the M2 Studio (12 cores) using the full D=14 multithreaded solver and shipped as a static JSON file:
 
 ```
-public/opening_book5x5.json — 824 canonical positions, ~30 KB
+public/opening_book5x5.json
 ```
 
-It covers the computer's optimal response to every reachable sequence of the first 3 human moves, for both the "computer goes first" and "computer goes second" scenarios.
+It covers the computer's optimal response to every reachable sequence of the first 6 plies (3 moves per side), for both the "computer goes first" and "computer goes second" scenarios.
+
+> **Current status:** The book is being regenerated with the corrected anti-diagonal and dead-position pruning fixes. Generation runs at D=14 (one step above the D=12 convergence depth, for extra confidence). Progress is checkpointed incrementally to `results/book_checkpoint.tsv` so a restart picks up where it left off.
 
 **Design:**
 - **Key**: canonical 25-character board string (values `0`/`1`/`2` for empty/X/O), where "canonical" is the lexicographically minimum reading of the board over all 8 D₈ symmetry transforms.
@@ -122,21 +128,26 @@ TicTacToe5x5/
 │
 ├── engine/
 │   ├── Bitboard.hpp            # Bitboard representation + D₈ symmetry
+│   │                           #   + isTheoreticalDraw() dead-position detector
 │   ├── Solver.hpp              # Minimax, alpha-beta, depth-preferred TT,
-│   │                           #   open-line + positional heuristics
+│   │                           #   abort flag, wall-clock timeout, heuristics
 │   └── wasm_api.cpp            # C→WASM bridge (wasm_init, wasm_getBestMove, …)
 │
 ├── public/
 │   ├── engine.js               # Emscripten-generated WASM loader  ← committed
 │   ├── engine.wasm             # Compiled engine binary            ← committed
-│   └── opening_book5x5.json   # 824 D=12 canonical openings (6-ply) ← committed
+│   └── opening_book5x5.json   # D=14 canonical openings (6-ply)   ← committed
 │
 ├── tools/
 │   ├── calibrate.cpp           # Depth convergence calibration tool
-│   └── gen_book5x5.cpp         # Exhaustive opening book generator (D=12, 6-ply)
+│   ├── gen_book5x5.cpp         # Exhaustive opening book generator (D=14, 6-ply)
+│   │                           #   incremental checkpoint to results/book_checkpoint.tsv
+│   └── test_win.cpp            # Unit tests: win detection, anti-diagonal fix,
+│                               #   isTheoreticalDraw(), solver timing
 │
 ├── results/                    # Generated at runtime (gitignored)
 │   ├── calibration_d20.txt     # Convergence table from overnight run
+│   ├── book_checkpoint.tsv     # Incremental book-gen progress (resume on restart)
 │   └── gen_book5x5.log         # Book generation progress log
 │
 └── Makefile
@@ -158,7 +169,7 @@ TicTacToe5x5/
 ### Commands
 
 ```bash
-# Build native tools (calibrate + gen_book5x5)
+# Build native tools (calibrate + gen_book5x5 + test_win)
 make
 
 # Build WASM engine (requires emcc on PATH or ~/emsdk)
@@ -172,10 +183,15 @@ make serve
 make run-quiet      # suppress thread logs
 make run            # include per-thread timing on stderr
 
+# Run engine unit tests (win detection, anti-diagonal, dead-position, timing)
+make test
+
 # Generate opening book (runs overnight — nohup, safe to disconnect)
 make book
-# Progress: tail -f results/gen_book5x5.log
-# Output:   public/opening_book5x5.json
+# Progress:    tail -f results/gen_book5x5.log
+# Entry count: wc -l results/book_checkpoint.tsv
+# Output:      public/opening_book5x5.json
+# Safe to Ctrl-C: restarts resume from checkpoint automatically.
 ```
 
 ### Updating the Opening Book

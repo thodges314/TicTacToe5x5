@@ -459,6 +459,98 @@ The ternary `heuristic ? ... : 0` checks if `heuristic` is set before calling
 it. The calibration and book-generation tools set a heuristic; the WASM build
 does not, so non-terminal depth-limit nodes return 0.
 
+### Dead-position detection — `isTheoreticalDraw()`
+
+Even with alpha-beta and the TT, the solver can stall in drawn endgames where
+no win is geometrically reachable. Without intervention, minimax would expand
+every remaining move anyway — potentially millions of nodes for no reason.
+
+`isTheoreticalDraw()` in `Bitboard.hpp` fixes this:
+
+```cpp
+bool isTheoreticalDraw() const {
+    // A line is "alive" if at least one player has no pieces in it
+    //   → that player can still complete it → game is not a dead draw.
+    // A line is "dead" if BOTH players have ≥1 piece in it.
+    // We return false as soon as we find any alive line.
+
+    // Horizontal lines
+    for (int r = 0; r < size; r++)
+        for (int c = 0; c <= size - target; c++) {
+            uint64_t mask = ((1ULL << target) - 1) << (r * size + c);
+            if (!(xBits & mask) || !(oBits & mask)) return false;
+        }
+    // ... same check for vertical, diagonal, anti-diagonal ...
+    return true;  // every line is dead → guaranteed draw
+}
+```
+
+On a 5×5 board with a target of 5, there are exactly **12 winning lines** (5
+horizontal + 5 vertical + 1 main diagonal + 1 anti-diagonal). This function
+costs 12 × 2 bitwise AND operations — cheaper than expanding even a single
+child node.
+
+When minimax calls it:
+
+```cpp
+if (board.isTheoreticalDraw()) return 0;
+```
+
+The search terminates the entire subtree in O(1) rather than expanding it. In
+practice this prunes entire families of late-game positions that were causing
+the book generator to stall for indefinite periods.
+
+**Check order in minimax:**
+1. `checkWin(1)` / `checkWin(2)` — someone has already won
+2. `getAvailableMoves()` empty — board is full (draw)
+3. **`isTheoreticalDraw()`** — no win is geometrically reachable (new)
+4. Depth limit reached — return heuristic or 0
+5. TT lookup — position already cached
+6. Recurse
+
+The theoretical draw check comes *before* the depth limit so it fires even in
+exhaustive (no-depth-limit) searches.
+
+### The anti-diagonal bug
+
+A subtle bit-template error caused the solver to miss wins on the anti-diagonal
+(the ↙ direction, e.g. cells 4 → 8 → 12 → 16 → 20 on a 5×5 board).
+
+**The bug:** The template for anti-diagonal lines was computed with:
+```cpp
+// WRONG — places first bit at index 0, not at index (target-1)
+for (int i = 0; i < target; i++) d2T |= (1ULL << (i * (size - 1)));
+```
+This anchors the template at the *left* column, but anti-diagonals ↙ must be
+anchored at column `target-1` (the right side of any valid starting point).
+
+**The fix:**
+```cpp
+// CORRECT — bit i is at flat index i*(size-1) + (target-1)
+for (int i = 0; i < target; i++) d2T |= (1ULL << (i * (size - 1) + (target - 1)));
+```
+
+For a 5×5 board (`size=5`, `target=5`), the bits land at flat indices:
+```
+i=0: 4      (cell 0,4)
+i=1: 4+4=8  (cell 1,3)
+i=2: 4+8=12 (cell 2,2)
+i=3: 4+12=16 (cell 3,1)
+i=4: 4+16=20 (cell 4,0)
+```
+Those are exactly the five cells of the main anti-diagonal — the template is
+now correct.
+
+**Consequence of the bug:** `checkWin()` returned `false` for any anti-diagonal
+win. Minimax therefore never detected a terminal state for those positions,
+continuing to search past a won board, producing an exponentially exploding
+search tree. This was the root cause of the book-generator hang observed during
+ply-5 position solving.
+
+**Verification:** `tools/test_win.cpp` includes a regression test that places
+pieces on the exact anti-diagonal that previously failed and asserts
+`checkWin(1) == true`.
+
 ---
 
 ## Part 6: Multithreading — Native Build Only
@@ -531,6 +623,77 @@ Rather than launching all 25 threads at once, moves are processed in batches
 of `maxThreads` (equal to the number of CPU cores). This avoids thread
 contention: beyond a certain point, more threads means more context-switching
 overhead than computation. Batching keeps thread count ≤ core count.
+
+### The abort flag — `std::atomic<bool> abortSearch`
+
+The book generator runs hundreds of positions. With a deep search (D=14) and
+the board in a complex state, a single position could theoretically stall a
+thread. An `abortSearch` flag was added to escape this:
+
+```cpp
+// Solver.hpp — member variable
+std::atomic<bool> abortSearch{false};
+
+// At the top of every minimax call:
+if (abortSearch.load(std::memory_order_relaxed)) return 0;
+```
+
+`std::atomic<bool>` guarantees that reads and writes are indivisible across all
+CPU threads. Without it, a plain `bool` write by the main thread might not be
+visible to worker threads immediately — or at all — due to CPU caching. The
+atomic load uses `relaxed` ordering: no synchronization fence needed, just
+visibility.
+
+This check adds one load (≈1 ns) per minimax node. The cost is negligible
+because the check only fires when the flag is `true` (abort in progress).
+
+### Wall-clock timeout in `getBestMove`
+
+The book generator wraps each call to `getBestMove` with a wall-clock budget
+(ply-scaled from 90 minutes for ply 0 down to 8 minutes for the deepest
+plies):
+
+```cpp
+std::pair<int,int> getBestMove(Bitboard board, bool isX,
+                               int maxDepth = INT_MAX,
+                               int64_t softLimitMs = 300000) {  // 5-min default
+    ...
+    abortSearch.store(false, std::memory_order_relaxed);
+    auto tStart = std::chrono::steady_clock::now();
+
+    for (size_t i = 0; i < moves.size(); i += maxThreads) {
+        // Check budget before each new batch
+        auto elapsed = duration_cast<milliseconds>(steady_clock::now() - tStart).count();
+        if (elapsed >= softLimitMs) {
+            abortSearch.store(true, std::memory_order_relaxed);
+            cerr << "  [TIMEOUT after " << elapsed << " ms]\n";
+            break;
+        }
+        // ... launch batch, drain futures ...
+    }
+    abortSearch.store(false, std::memory_order_relaxed);  // reset for next call
+    return {bestMove, bestScore};
+}
+```
+
+**Drain-after-abort:** Even after setting `abortSearch = true`, the code still
+calls `f.get()` on all futures in the current batch. Since minimax checks the
+flag at every node, the threads return almost immediately. `f.get()` then
+unblocks quickly. Skipping the drain would leave threads running in the
+background fighting for the TT — the drain ensures clean, deterministic shutdown
+before the next position begins.
+
+**Best-move validity:** After an abort, the scores returned by interrupted
+threads are unreliable (they returned 0, not a real evaluation). The code
+tracks this:
+```cpp
+if (!abortSearch.load()) {
+    // Normal: update best from this thread's result
+} else {
+    // Aborted: keep existing bestMove (the fallback from moves[0])
+}
+```
+The generator always gets a valid move — the first legal move is the fallback.
 
 ---
 
@@ -641,13 +804,13 @@ up in microseconds is strictly better.
 
 ### The gen_book5x5 generator
 
-The tool in `tools/gen_book5x5.cpp` runs the full D=12 multithreaded engine on
-every reachable board position for the first 6 plies (3 moves per side). It
+The tool in `tools/gen_book5x5.cpp` runs the full **D=14** multithreaded engine
+on every reachable board position for the first 6 plies (3 moves per side). It
 builds a `std::map<std::string, int>` in memory, then writes it to JSON:
 
 ```json
 {
-  "searchDepth": 12,
+  "searchDepth": 14,
   "entries": {
     "0000000000010000000000000": 12,
     ...
@@ -658,6 +821,29 @@ builds a `std::map<std::string, int>` in memory, then writes it to JSON:
 Each key is a 25-character string (one character per cell: `0`, `1`, or `2`),
 representing the **canonical** form of the board. The value is the flat index
 of the best move in canonical coordinates.
+
+**Incremental checkpointing:** After each solved position, the generator
+appends a line to `results/book_checkpoint.tsv`:
+```
+<key>\t<move>\t<score>\t<ply>\n
+```
+On startup the generator reads this file and skips any key already present.
+This makes the generator safe to interrupt and restart: no work is lost.
+
+**Ply-scaled timeouts:** Each position is given a wall-clock budget that scales
+with how early in the game it is:
+
+| Ply | Solver depth remaining | Timeout |
+|-----|------------------------|--------|
+| 0 | D=14 | 90 min |
+| 2 | D=12 | 45 min |
+| 4 | D=10 | 20 min |
+| 5+ | D=9 and below | 8 min |
+
+If a position exceeds its budget, the solver returns the best move found so far
+(always a valid legal move), logs a `[TIMEOUT]` message, and continues to the
+next position. This prevents a single pathological position from blocking the
+entire generation run.
 
 ### Canonical board strings and D₈ in JavaScript
 
@@ -804,8 +990,9 @@ Here is the flow of a single computer move in the WASM game:
       │   │   ├─ Clone board, setPiece()
       │   │   └─ minimax(next, depth=0, alpha, beta, !isX, maxDepth)
       │   │       ├─ Check win → return ±(1000 - depth)
-      │   │       ├─ Check draw → return 0
-      │   │       ├─ Check depth limit → return 0
+      │   │       ├─ Check board full → return 0
+      │   │       ├─ isTheoreticalDraw() → return 0 early (no win possible)
+      │   │       ├─ Check depth limit → return heuristic or 0
       │   │       ├─ computeCanonicalState() → TT lookup
       │   │       │   └─ If EXACT: return cached score immediately
       │   │       │   └─ If LOWER/UPPER: tighten alpha/beta

@@ -59,6 +59,10 @@ public:
     static constexpr size_t tableSize = 1u << 24; // 128 MB, power of 2
     TTEntry* table;
 
+    // Abort flag: set to true to make all running minimax calls return early.
+    // Reset to false before each getBestMove call.
+    std::atomic<bool> abortSearch{false};
+
     Solver()  { table = new TTEntry[tableSize]; }
     ~Solver() { delete[] table; }
 
@@ -74,11 +78,19 @@ public:
     // -------------------------------------------------------------------------
     int minimax(Bitboard board, int depth, int alpha, int beta, bool isMaximizing,
                 int maxDepth = std::numeric_limits<int>::max()) {
+        // Check abort flag first — allows in-flight threads to exit quickly.
+        if (abortSearch.load(std::memory_order_relaxed)) return 0;
+
         if (board.checkWin(1)) return  1000 - depth;
         if (board.checkWin(2)) return -1000 + depth;
 
         auto moves = board.getAvailableMoves();
         if (moves.empty()) return 0;
+
+        // Dead-position early exit: if every winning line contains pieces from
+        // both players, no one can ever win — return 0 without further search.
+        if (board.isTheoreticalDraw()) return 0;
+
         if (depth >= maxDepth) return heuristic ? heuristic(board, isMaximizing) : 0;
 
         uint64_t key   = board.getCanonicalState();
@@ -159,10 +171,19 @@ public:
     // Multithreaded getBestMove — native build only.
     // Batches moves in groups of hardware_concurrency() to avoid thread thrash.
     // -------------------------------------------------------------------------
+    // softLimitMs: wall-clock budget per position (default 5 min).
+    // When exceeded, abortSearch is set so in-flight minimax calls return
+    // immediately (checking the flag costs one relaxed load per node).
+    // getBestMove then drains remaining futures and returns the best move
+    // found so far — always a valid move, never -1 (unless board has none).
     std::pair<int,int> getBestMove(Bitboard board, bool isX,
-                                   int maxDepth = std::numeric_limits<int>::max()) {
+                                   int maxDepth = std::numeric_limits<int>::max(),
+                                   int64_t softLimitMs = 300000) {  // 5-minute default
         auto moves = board.getAvailableMoves();
         if (moves.empty()) return {-1, 0};
+
+        abortSearch.store(false, std::memory_order_relaxed);
+        auto tStart = std::chrono::steady_clock::now();
 
         std::mutex cout_mutex;
         const unsigned int maxThreads = []() {
@@ -170,11 +191,22 @@ public:
             return (hw > 0) ? hw : 12u;
         }();
 
-        int bestMove  = -1;
+        int bestMove  = moves[0];  // always have a fallback
         int bestScore = isX ? std::numeric_limits<int>::min()
                              : std::numeric_limits<int>::max();
 
         for (size_t i = 0; i < moves.size(); i += maxThreads) {
+            // Check wall-clock budget before starting a new batch.
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - tStart).count();
+            if (elapsed >= softLimitMs) {
+                abortSearch.store(true, std::memory_order_relaxed);
+                std::lock_guard<std::mutex> lk(cout_mutex);
+                std::cerr << "  [TIMEOUT after " << elapsed
+                          << " ms — returning best move found so far]\n";
+                break;
+            }
+
             size_t end = std::min(i + static_cast<size_t>(maxThreads), moves.size());
             std::vector<std::future<std::pair<int,int>>> futures;
             futures.reserve(end - i);
@@ -209,12 +241,21 @@ public:
                 ));
             }
 
+            // Drain futures — if abortSearch is set, minimax exits quickly.
             for (auto& f : futures) {
                 auto [move, score] = f.get();
-                if ( isX && score > bestScore) { bestScore = score; bestMove = move; }
-                if (!isX && score < bestScore) { bestScore = score; bestMove = move; }
+                // Only update best if search was not aborted (score=0 is unreliable).
+                if (!abortSearch.load(std::memory_order_relaxed)) {
+                    if ( isX && score > bestScore) { bestScore = score; bestMove = move; }
+                    if (!isX && score < bestScore) { bestScore = score; bestMove = move; }
+                } else {
+                    // After abort just use first non-negative result as tiebreak.
+                    if (bestMove == moves[0]) { bestMove = move; }
+                }
             }
         }
+
+        abortSearch.store(false, std::memory_order_relaxed);  // reset for next call
         return {bestMove, bestScore};
     }
 #endif

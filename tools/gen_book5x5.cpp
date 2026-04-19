@@ -25,6 +25,7 @@
 #include "../engine/Bitboard.hpp"
 #include "../engine/Solver.hpp"
 #include <iostream>
+#include <fstream>
 #include <map>
 #include <string>
 #include <chrono>
@@ -68,8 +69,11 @@ static Canon canonicalize(const Bitboard& board) {
 // Traverses the game tree to depth BOOK_PLIES.
 // At each computer turn: compute D=SEARCH_DEPTH best move, store in book.
 // At each human turn: recurse over ALL available human moves.
+// ckFile: opened in append mode — each new entry is flushed immediately so
+//         the process can be killed and restarted without losing progress.
 static void buildBook(Bitboard board, int ply, bool compIsX, bool isXTurn,
-                      Solver& solver, std::map<std::string, int>& book) {
+                      Solver& solver, std::map<std::string, int>& book,
+                      std::ofstream& ckFile) {
     if (ply >= BOOK_PLIES) return;
 
     const bool compTurn = (isXTurn == compIsX);
@@ -78,8 +82,18 @@ static void buildBook(Bitboard board, int ply, bool compIsX, bool isXTurn,
         Canon c = canonicalize(board);
         if (book.count(c.str)) return;  // already computed (canonical duplicate)
 
+        // Ply-scaled time limit: early plies have large open search spaces.
+        // ply 0-1: 90 min, ply 2-3: 20 min, ply 4-5: 8 min.
+        // (Pre-fix, ply=0 took ~30 min; ply=5 took ~37s.  Generous margins here.)
+        static constexpr int64_t TIME_LIMITS_MS[] = {
+            5400000, 5400000,   // ply 0, 1: 90 min
+            1200000, 1200000,   // ply 2, 3: 20 min
+             480000,  480000    // ply 4, 5:  8 min
+        };
+        const int64_t timeLimitMs = (ply < 6) ? TIME_LIMITS_MS[ply] : 300000;
+
         auto t0 = std::chrono::high_resolution_clock::now();
-        auto [move, score] = solver.getBestMove(board, isXTurn, SEARCH_DEPTH);
+        auto [move, score] = solver.getBestMove(board, isXTurn, SEARCH_DEPTH, timeLimitMs);
         (void)score;
         auto ms = std::chrono::duration<double,std::milli>(
                       std::chrono::high_resolution_clock::now() - t0).count();
@@ -88,6 +102,10 @@ static void buildBook(Bitboard board, int ply, bool compIsX, bool isXTurn,
         int mr = move / BOARD, mc = move % BOARD;
         int canonFlat = Bitboard::applySymmetry(c.sym, mr, mc, BOARD);
         book[c.str] = canonFlat;
+
+        // ── Checkpoint: flush entry immediately so restarts skip it ───────────
+        ckFile << c.str << "\t" << canonFlat << "\n";
+        ckFile.flush();
 
         std::cerr << "  ply=" << ply
                   << "  key=" << c.str.substr(0,12) << "..."
@@ -101,7 +119,7 @@ static void buildBook(Bitboard board, int ply, bool compIsX, bool isXTurn,
         Bitboard next = board;
         next.setPiece(mr, mc, isXTurn ? 1 : 2);
         if (!next.checkWin(1) && !next.checkWin(2))
-            buildBook(next, ply + 1, compIsX, !isXTurn, solver, book);
+            buildBook(next, ply + 1, compIsX, !isXTurn, solver, book, ckFile);
 
     } else {
         // Human's turn: try every possible move
@@ -109,7 +127,7 @@ static void buildBook(Bitboard board, int ply, bool compIsX, bool isXTurn,
             Bitboard next = board;
             next.setPiece(m / BOARD, m % BOARD, isXTurn ? 1 : 2);
             if (next.checkWin(1) || next.checkWin(2)) continue;
-            buildBook(next, ply + 1, compIsX, !isXTurn, solver, book);
+            buildBook(next, ply + 1, compIsX, !isXTurn, solver, book, ckFile);
         }
     }
 }
@@ -154,15 +172,31 @@ int main() {
         return std::max(-999, std::min(999, raw));
     };
 
+    // ── Checkpoint: load existing entries so restarts skip recomputation ────
+    static const std::string CHECKPOINT_PATH = "results/book_checkpoint.tsv";
     std::map<std::string, int> book;
+    {
+        std::ifstream ck(CHECKPOINT_PATH);
+        if (ck.good()) {
+            std::string key; int move;
+            while (ck >> key >> move) book[key] = move;
+            if (!book.empty())
+                std::cerr << "  Checkpoint loaded: " << book.size()
+                          << " entries — resuming from where we left off.\n\n";
+        }
+    }
+    // Open checkpoint for appending new entries as they are computed
+    std::ofstream ckFile(CHECKPOINT_PATH, std::ios::app);
+    if (!ckFile)
+        std::cerr << "  WARNING: could not open checkpoint file — progress will not be saved.\n";
 
     // ── Computer goes FIRST (as X) ────────────────────────────────────────────
     std::cerr << "Building book: computer as X (goes first)...\n";
-    buildBook(Bitboard(BOARD, WIN_TARGET), 0, true, true, solver, book);
+    buildBook(Bitboard(BOARD, WIN_TARGET), 0, true, true, solver, book, ckFile);
 
     // ── Computer goes SECOND (as O) ───────────────────────────────────────────
     std::cerr << "\nBuilding book: computer as O (goes second)...\n";
-    buildBook(Bitboard(BOARD, WIN_TARGET), 0, false, true, solver, book);
+    buildBook(Bitboard(BOARD, WIN_TARGET), 0, false, true, solver, book, ckFile);
 
     std::cerr << "\nTotal unique canonical entries: " << book.size() << "\n";
     std::cerr << "Writing JSON to stdout...\n";
