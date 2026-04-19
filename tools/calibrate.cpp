@@ -38,6 +38,19 @@
 #include <algorithm>
 #include <cmath>
 
+static auto T0 = std::chrono::high_resolution_clock::now();
+static std::string elapsed() {
+    double s = std::chrono::duration<double>(
+        std::chrono::high_resolution_clock::now() - T0).count();
+    int h = (int)s / 3600, m = ((int)s % 3600) / 60, sec = (int)s % 60;
+    std::ostringstream ss;
+    ss << std::setfill('0')
+       << std::setw(2) << h << "h"
+       << std::setw(2) << m << "m"
+       << std::setw(2) << sec << "s";
+    return ss.str();
+}
+
 // ── Config ───────────────────────────────────────────────────────────────────
 static constexpr int BOARD      = 5;
 static constexpr int WIN_TARGET = 5;
@@ -142,10 +155,12 @@ static bool seqMatch(const GameRecord& a, const GameRecord& b) {
 // ── Play one game ─────────────────────────────────────────────────────────────
 // Each Solver keeps its own TT (warm across moves in a game = realistic).
 // heuristic is installed on both solvers before-hand.
-static GameRecord playGame(Solver& sx, int dx, Solver& so, int dy) {
+static GameRecord playGame(Solver& sx, int dx, Solver& so, int dy,
+                           const std::string& label = "") {
     Bitboard board(BOARD, WIN_TARGET);
     GameRecord rec;
     bool xTurn = true;
+    int  moveNum = 0;
     auto t0 = std::chrono::high_resolution_clock::now();
 
     while (true) {
@@ -154,12 +169,29 @@ static GameRecord playGame(Solver& sx, int dx, Solver& so, int dy) {
 
         Solver& s = xTurn ? sx : so;
         int     d = xTurn ? dx : dy;
+
+        auto mt0 = std::chrono::high_resolution_clock::now();
         auto [move, score] = s.getBestMove(board, xTurn, d);
         (void)score;
+        double mms = std::chrono::duration<double, std::milli>(
+                         std::chrono::high_resolution_clock::now() - mt0).count();
+
         if (move == -1) { rec.outcome = 0; break; }
 
         board.setPiece(move/BOARD, move%BOARD, xTurn ? 1 : 2);
         rec.moves.push_back(move);
+        moveNum++;
+
+        // Per-move progress line — flushed immediately so terminal updates live
+        if (!label.empty()) {
+            std::cout << "  " << DIM << "[" << elapsed() << "] "
+                      << label << "  move " << std::setw(2) << moveNum
+                      << " (" << (xTurn ? "X" : "O") << " D="
+                      << d << ")  [" << move/BOARD << "," << move%BOARD << "]"
+                      << "  " << std::fixed << std::setprecision(0)
+                      << mms << " ms" << RESET << "\n" << std::flush;
+        }
+
         if (board.checkWin(1)) { rec.outcome = 1; break; }
         if (board.checkWin(2)) { rec.outcome = 2; break; }
         xTurn = !xTurn;
@@ -209,7 +241,7 @@ int main() {
     std::vector<std::pair<int,GameRecord>> selfGames;  // {depth, record}
 
     for (int d = MIN_DEPTH; d <= MAX_DEPTH; d += STEP) {
-        std::cerr << "[calibrate] self-play D=" << d << "...\n";
+        std::cout << DIM << "  [" << elapsed() << "] self-play D=" << d << "..." << RESET << "\n" << std::flush;
         Solver s;  makeSolver(s);
         GameRecord r = playGame(s, d, s, d);
 
@@ -253,15 +285,18 @@ int main() {
         int dLow  = selfGames[idx    ].first;
         int dHigh = selfGames[idx + 1].first;
 
-        std::cerr << "[calibrate] cross D=" << dLow << " vs D=" << dHigh << "...\n";
+        std::cout << DIM << "  [" << elapsed() << "] cross D=" << dLow
+                  << " vs D=" << dHigh << "..." << RESET << "\n" << std::flush;
 
         // Game A: dLow as X, dHigh as O
         Solver sxA, soA;  makeSolver(sxA); makeSolver(soA);
-        GameRecord gA = playGame(sxA, dLow, soA, dHigh);
+        std::ostringstream labelA; labelA << "D=" << dLow << "X vs D=" << dHigh << "O";
+        GameRecord gA = playGame(sxA, dLow, soA, dHigh, labelA.str());
 
         // Game B: dHigh as X, dLow as O
         Solver sxB, soB;  makeSolver(sxB); makeSolver(soB);
-        GameRecord gB = playGame(sxB, dHigh, soB, dLow);
+        std::ostringstream labelB; labelB << "D=" << dHigh << "X vs D=" << dLow << "O";
+        GameRecord gB = playGame(sxB, dHigh, soB, dLow, labelB.str());
 
         bool holdsX = (gA.outcome != 2);  // D not beaten as X
         bool holdsO = (gB.outcome != 1);  // D not beaten as O

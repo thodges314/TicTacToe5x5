@@ -60,6 +60,12 @@ run: tools/calibrate
 run-quiet: tools/calibrate
 	./tools/calibrate 2>/dev/null
 
+# Tees stdout to a log file and follows it live — lets you see per-move progress.
+# Open a second terminal and run:  tail -f results/calibrate.log
+run-monitor: tools/calibrate
+	@mkdir -p results
+	./tools/calibrate 2>/dev/null | tee results/calibrate.log
+
 # ── Win-detection unit tests ─────────────────────────────────────────────────
 tools/test_win: tools/test_win.cpp engine/Bitboard.hpp
 	$(CXX) $(CXXFLAGS) $< -o $@
