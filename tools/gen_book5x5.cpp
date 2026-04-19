@@ -1,8 +1,10 @@
 // ============================================================================
-// gen_book5x5.cpp — Exhaustive D=12 Opening Book Generator for 5×5 Tic-Tac-Toe
+// gen_book5x5.cpp — Exhaustive D=14 Opening Book Generator for 5×5 Tic-Tac-Toe
 //
 // Precomputes the computer's optimal move for every board state reachable
 // within the first BOOK_PLIES plies, for both computer-as-X and computer-as-O.
+// D=14 is the calibrated convergence depth (corrected after fixing the
+// anti-diagonal win-detection bug — the buggy engine falsely converged at D=12).
 //
 // Key design:
 //  - Book key  : canonical board string (25 chars, each '0'/'1'/'2')
@@ -16,8 +18,9 @@
 //   inv:  0  3  2  1  4  5  6  7
 // (Reflections are self-inverse; 90°CW and 270°CW are mutual inverses)
 //
-// Usage: ./tools/gen_book5x5 > public/opening_book5x5.json 2>gen_book5x5.log
-//        Takes ~3-5 hours on M2 Studio with 12-thread solver.
+// Usage: ./tools/gen_book5x5 > public/opening_book5x5.json 2> >(tee results/gen_book5x5.log)
+//        (nohup-wrapped for safety; tail -f results/gen_book5x5.log in a 2nd terminal)
+//        Expected runtime: 8-14 hours on M2 Studio with 12-thread solver at D=14.
 // ============================================================================
 #include "../engine/Bitboard.hpp"
 #include "../engine/Solver.hpp"
@@ -29,7 +32,7 @@
 
 static constexpr int BOARD      = 5;
 static constexpr int WIN_TARGET = 5;
-static constexpr int SEARCH_DEPTH = 12;  // calibrated convergence depth
+static constexpr int SEARCH_DEPTH = 14;  // calibrated convergence depth (fixed engine)
 static constexpr int BOOK_PLIES = 6;     // cover first 3 moves per side
 
 // Inverse of each D₈ transform: INV[sym] = sym^{-1}

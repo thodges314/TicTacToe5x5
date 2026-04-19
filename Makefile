@@ -30,15 +30,18 @@ tools/calibrate: tools/calibrate.cpp engine/Bitboard.hpp engine/Solver.hpp
 tools/gen_book5x5: tools/gen_book5x5.cpp engine/Bitboard.hpp engine/Solver.hpp
 	$(CXX) $(CXXFLAGS) $< -o $@
 
-# Run generator — streams to file so it's safe to disconnect
+# Background book generation — survives terminal disconnect.
+# Progress streams to results/gen_book5x5.log AND to your terminal live.
+# Ctrl-C stops the tail but NOT the background process.
 book: tools/gen_book5x5
 	@mkdir -p public results
-	@echo "Generating opening book (D=12, 6-ply) — takes several hours..."
-	@echo "Progress in: results/gen_book5x5.log"
-	@echo "Output in:   public/opening_book5x5.json"
-	nohup ./tools/gen_book5x5 > public/opening_book5x5.json \
-	                          2> results/gen_book5x5.log &
-	@echo "Started PID: $$!"
+	@echo "=== Generating opening book (D=14, 6-ply) ==="
+	@echo "    Progress: results/gen_book5x5.log"
+	@echo "    Output:   public/opening_book5x5.json"
+	@echo "    Monitor:  tail -f results/gen_book5x5.log"
+	nohup sh -c './tools/gen_book5x5 >public/opening_book5x5.json 2>results/gen_book5x5.log' &
+	@echo "Started PID: $$!  (following log — Ctrl-C stops tail, not the process)"
+	tail -f results/gen_book5x5.log
 
 # ── WASM build ────────────────────────────────────────────────────────────────
 wasm: engine/wasm_api.cpp engine/Bitboard.hpp engine/Solver.hpp
