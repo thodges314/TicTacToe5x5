@@ -1,7 +1,7 @@
 {
   "boardSize": 5,
   "target": 5,
-  "searchDepth": 12,
+  "searchDepth": 14,
   "bookDepth": 6,
   "totalEntries": 824,
   "entries": {
